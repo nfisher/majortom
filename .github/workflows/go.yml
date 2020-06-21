@@ -30,3 +30,9 @@ jobs:
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v1
+
+    - name: Log into registry
+      run: echo "${{ secrets.DOCKER_TOKEN }}" | docker login --username nfinstana --password-stdin
+
+    - name: Docker Publish
+      run: make publish
