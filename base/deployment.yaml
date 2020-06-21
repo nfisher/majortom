@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: majortom
+  namespace: majortom
+  labels:
+    app: majortom
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: majortom
+  template:
+    metadata:
+      labels:
+        app: majortom
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 7377
+      containers:
+        - name: majortom
+          image: nfinstana/majortom:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8443
+              name: https
+          volumeMounts:
+            - name: tls-certs
+              mountPath: /run/secrets/tls
+              readOnly: true
+      volumes:
+        - name: tls-certs
+          secret:
+            secretName: majortom-tls

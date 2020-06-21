@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: majortom
+  namespace: majortom
+spec:
+  selector:
+    app: majortom
+  ports:
+    - port: 443
+      targetPort: https

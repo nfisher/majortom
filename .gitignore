@@ -4,6 +4,8 @@
 *.dll
 *.so
 *.dylib
+majortom
+majortom.amd64
 
 # Test binary, built with `go test -c`
 *.test
