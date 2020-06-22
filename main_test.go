@@ -91,3 +91,24 @@ func Test_system_namespace_request_should_be_pod(t *testing.T) {
 		t.Errorf("w.Body starts with <%v>, want `resource not a v1.Pod`", w.Body.String())
 	}
 }
+
+func Test_isSystem_kube_public(t *testing.T) {
+	actual := isSystem("kube-public")
+	if actual != true {
+		t.Errorf("isSystem(`kube-public`)=%v, want false", actual)
+	}
+}
+
+func Test_isSystem_kube_system(t *testing.T) {
+	actual := isSystem("kube-system")
+	if actual != true {
+		t.Errorf("isSystem(`kube-system`)=%v, want false", actual)
+	}
+}
+
+func Test_isSystem_default(t *testing.T) {
+	actual := isSystem("default")
+	if actual != false {
+		t.Errorf("isSystem(`default`)=%v, want false", actual)
+	}
+}
