@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	v1 "k8s.io/api/admission/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 func Test_get_should_not_be_allowed_method(t *testing.T) {
@@ -22,7 +24,7 @@ func Test_get_should_not_be_allowed_method(t *testing.T) {
 }
 
 func Test_non_json_content_type_should_be_invalid(t *testing.T) {
-	r, _ := http.NewRequest(http.MethodPost, "/", strings.NewReader(""))
+	r := post("")
 	r.Header.Set("Content-Type", "text/html")
 	w := httptest.NewRecorder()
 	addOwnerLabel(w, r)
@@ -34,62 +36,64 @@ func Test_non_json_content_type_should_be_invalid(t *testing.T) {
 	}
 }
 
-func Test_bad_body_should_be_bad_request(t *testing.T) {
-	r, _ := http.NewRequest(http.MethodPost, "/", strings.NewReader(""))
-	r.Header.Set("Content-Type", ApplicationJson)
-	w := httptest.NewRecorder()
-	addOwnerLabel(w, r)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("w.Code=%v, want StatusBadRequest", w.Code)
+var resourcePods = metav1.GroupVersionResource{Version: "v1", Resource: "resourcePods"}
+
+func Test_post(t *testing.T) {
+	cases := map[string]struct{
+		reqBody interface{}
+		code int
+		message string
+	}{
+		"empty body": {"", http.StatusBadRequest, "error reading response body" },
+		"nil review request": {&v1.AdmissionReview{}, http.StatusBadRequest, "nil admission request"},
+		"system namespace": {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "kube-system"}}, http.StatusForbidden, "will not modify resource in kube-* namespace"},
+		"deployments resource": {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: metav1.GroupVersionResource{Version: "v1", Resource: "deployments"}}}, http.StatusBadRequest, "resource not a v1.Pod"},
+		"empty pod payload": {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: resourcePods}}, http.StatusBadRequest, "unable to unmarshal kubernetes v1.Pod"},
+		"pod with owner": {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: resourcePods, Object: podWithOwnerLabel()}}, http.StatusForbidden, "pod has owner"},
+		"happy path":  {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: resourcePods, Object: tidePod()}}, http.StatusOK, `{"kind":"AdmissionReview","apiVersion":"admission.k8s.io/v1"`},
 	}
-	if !strings.HasPrefix(w.Body.String(), "error reading response body") {
-		t.Errorf("w.Body starts with <%v>, want `error reading response body`", w.Body.String())
+
+	for n, tc := range cases {
+		tc := tc
+		t.Run(n, func(t *testing.T) {
+			r := post(tc.reqBody)
+			w := httptest.NewRecorder()
+			addOwnerLabel(w, r)
+			if w.Code != tc.code {
+				t.Errorf("w.Code=%v, want %v", w.Code, tc.code)
+			}
+			if !strings.HasPrefix(w.Body.String(), tc.message) {
+				t.Errorf("response starts with <%v>, want <%v>", w.Body.String(), tc.message)
+			}
+		})
 	}
 }
 
-func Test_nil_request_should_be_bad_request(t *testing.T) {
-	b, _ := json.Marshal(&v1.AdmissionReview{})
-	buf := bytes.NewBuffer(b)
-	r, _ := http.NewRequest(http.MethodPost, "/", buf)
-	r.Header.Set("Content-Type", ApplicationJson)
-	w := httptest.NewRecorder()
-	addOwnerLabel(w, r)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("w.Code=%v, want StatusBadRequest", w.Code)
+func podWithOwnerLabel() runtime.RawExtension {
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: map[string]string{
+				"owner": "betty.boop",
+			},
+		},
 	}
-	if !strings.HasPrefix(w.Body.String(), "nil admission request") {
-		t.Errorf("w.Body starts with <%v>, want `nil admission request`", w.Body.String())
-	}
+	raw, _ := json.Marshal(&pod)
+
+	return runtime.RawExtension{Raw: raw}
 }
 
-func Test_system_namespace_request_should_be_forbidden(t *testing.T) {
-	b, _ := json.Marshal(&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "kube-system"}})
-	buf := bytes.NewBuffer(b)
-	r, _ := http.NewRequest(http.MethodPost, "/", buf)
-	r.Header.Set("Content-Type", ApplicationJson)
-	w := httptest.NewRecorder()
-	addOwnerLabel(w, r)
-	if w.Code != http.StatusForbidden {
-		t.Errorf("w.Code=%v, want StatusForbidden", w.Code)
-	}
-	if !strings.HasPrefix(w.Body.String(), "will not modify resource in kube-* namespace") {
-		t.Errorf("w.Body starts with <%v>, want `will not modify resource in kube-* namespace`", w.Body.String())
-	}
+func tidePod() runtime.RawExtension {
+	pod := &corev1.Pod{}
+	raw, _ := json.Marshal(&pod)
+	return runtime.RawExtension{Raw: raw}
 }
 
-func Test_system_namespace_request_should_be_pod(t *testing.T) {
-	b, _ := json.Marshal(&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: metav1.GroupVersionResource{Version: "v1", Resource: "deployment"}}})
+func post(v interface{}) *http.Request {
+	b, _ := json.Marshal(v)
 	buf := bytes.NewBuffer(b)
 	r, _ := http.NewRequest(http.MethodPost, "/", buf)
 	r.Header.Set("Content-Type", ApplicationJson)
-	w := httptest.NewRecorder()
-	addOwnerLabel(w, r)
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("w.Code=%v, want StatusBadRequest", w.Code)
-	}
-	if !strings.HasPrefix(w.Body.String(), "resource not a v1.Pod") {
-		t.Errorf("w.Body starts with <%v>, want `resource not a v1.Pod`", w.Body.String())
-	}
+	return r
 }
 
 func Test_isSystem_kube_public(t *testing.T) {

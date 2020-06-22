@@ -16,6 +16,8 @@ import (
 
 const (
 	DefaultAddr     = ":8443"
+	DefaultCertPath = "/run/secrets/tls/tls.crt"
+	DefaultKeyPath  = "/run/secrets/tls/tls.key"
 	ApplicationJson = `application/json`
 )
 
@@ -24,32 +26,23 @@ var (
 	Revision = "dev"
 )
 
-func main() {
-	var certPath string
-	var keyPath string
-	var addr = DefaultAddr
-
-	certPath = "/run/secrets/tls/tls.crt"
-	keyPath = "/run/secrets/tls/tls.key"
-
+func Exec(addr, certPath, keyPath string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/labels/owner", addOwnerLabel)
 	server := &http.Server{
 		Addr:    addr,
 		Handler: &logger{mux},
 	}
-
-	if certPath == "" || keyPath == "" {
-		log.Println("binding clear text listener on :8080")
-		server.Addr = ":8080"
-		log.Fatal(server.ListenAndServe())
-	}
 	log.Println("binding TLS listener on", server.Addr)
-	log.Fatal(server.ListenAndServeTLS(certPath, keyPath))
+	log.Fatalln(server.ListenAndServeTLS(certPath, keyPath))
+}
+
+func main() {
+	Exec(DefaultAddr, DefaultCertPath, DefaultKeyPath)
 }
 
 var dec = serializer.NewCodecFactory(runtime.NewScheme()).UniversalDeserializer()
-var podResource = metav1.GroupVersionResource{Version: "v1", Resource: "pods"}
+var podResource = metav1.GroupVersionResource{Version: "v1", Resource: "resourcePods"}
 var reviewResource = metav1.GroupVersionResource{Version: "v1", Resource: "AdmissionReview"}
 
 func closer(c io.Closer) {
@@ -72,9 +65,8 @@ func addOwnerLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dec := json.NewDecoder(r.Body)
 	var review v1.AdmissionReview
-	err := dec.Decode(&review)
+	err := json.NewDecoder(r.Body).Decode(&review)
 	if err != nil {
 		http.Error(w, "error reading response body", http.StatusBadRequest)
 		return
@@ -98,7 +90,7 @@ func addOwnerLabel(w http.ResponseWriter, r *http.Request) {
 	var pod corev1.Pod
 	err = json.Unmarshal(review.Request.Object.Raw, &pod)
 	if err != nil {
-		http.Error(w, "invalid kubernetes resource type", http.StatusBadRequest)
+		http.Error(w, "unable to unmarshal kubernetes v1.Pod", http.StatusBadRequest)
 		return
 	}
 
@@ -117,12 +109,12 @@ func addOwnerLabel(w http.ResponseWriter, r *http.Request) {
 
 	pt := v1.PatchTypeJSONPatch
 	resp := v1.AdmissionReview{
-		TypeMeta: metav1.TypeMeta{ Kind: "AdmissionReview", APIVersion: "admission.k8s.io/v1" },
+		TypeMeta: metav1.TypeMeta{Kind: "AdmissionReview", APIVersion: "admission.k8s.io/v1"},
 		Response: &v1.AdmissionResponse{
-			UID:     review.Request.UID,
-			Allowed: true,
+			UID:       review.Request.UID,
+			Allowed:   true,
 			PatchType: &pt,
-			Patch:   ops,
+			Patch:     ops,
 		},
 	}
 
