@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 
@@ -73,14 +72,9 @@ func addOwnerLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	b, err := ioutil.ReadAll(r.Body)
-	if err != nil {
-		http.Error(w, "error reading response body", http.StatusBadRequest)
-		return
-	}
-
+	dec := json.NewDecoder(r.Body)
 	var review v1.AdmissionReview
-	_, _, err = dec.Decode(b, nil, &review)
+	err := dec.Decode(&review)
 	if err != nil {
 		http.Error(w, "error reading response body", http.StatusBadRequest)
 		return
@@ -102,9 +96,9 @@ func addOwnerLabel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var pod corev1.Pod
-	_, _, err = dec.Decode(review.Request.Object.Raw, nil, &pod)
+	err = json.Unmarshal(review.Request.Object.Raw, &pod)
 	if err != nil {
-		http.Error(w, "invalid resource ", http.StatusBadRequest)
+		http.Error(w, "invalid kubernetes resource type", http.StatusBadRequest)
 		return
 	}
 
@@ -132,7 +126,6 @@ func addOwnerLabel(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	log.Printf("resp=%#v\n", resp)
 	w.Header().Set("Content-Type", ApplicationJson)
 	enc := json.NewEncoder(w)
 	err = enc.Encode(&resp)

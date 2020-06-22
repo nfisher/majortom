@@ -26,7 +26,10 @@ majortom.amd64: $(SRC)
 docker: majortom.amd64 cover.out
 	docker build . -t nfinstana/majortom:latest -t nfinstana/majortom:$(GIT_SHA)
 
-.PHONY: publish
-publish: docker
+.PHONY: dev
+dev: docker
 	docker push nfinstana/majortom:$(GIT_SHA)
+
+.PHONY: publish
+publish: dev
 	docker push nfinstana/majortom:latest
