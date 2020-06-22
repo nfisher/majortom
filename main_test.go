@@ -37,7 +37,7 @@ func Test_non_json_content_type_should_be_invalid(t *testing.T) {
 	}
 }
 
-var resourcePods = metav1.GroupVersionResource{Version: "v1", Resource: "resourcePods"}
+var resourcePods = metav1.GroupVersionResource{Version: "v1", Resource: "pods"}
 
 func Test_post(t *testing.T) {
 	cases := map[string]struct {

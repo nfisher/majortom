@@ -47,7 +47,7 @@ func main() {
 	Exec(DefaultAddr, DefaultCertPath, DefaultKeyPath)
 }
 
-var podResource = metav1.GroupVersionResource{Version: "v1", Resource: "resourcePods"}
+var podResource = metav1.GroupVersionResource{Version: "v1", Resource: "pods"}
 
 func closer(c io.Closer) {
 	err := c.Close()
