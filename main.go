@@ -25,8 +25,11 @@ var (
 	Revision = "dev"
 )
 
+const LogFlags = log.LstdFlags|log.LUTC|log.Lshortfile
+
 func Exec(addr, certPath, keyPath string) {
-	lg := log.New(os.Stderr, "", log.LstdFlags|log.LUTC|log.Lshortfile)
+	log.SetFlags(LogFlags)
+	lg := log.New(os.Stderr, "", LogFlags)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/labels/owner", bind(podPatch, addOwner))
 	server := &http.Server{
@@ -75,12 +78,14 @@ func bind(handler func(http.ResponseWriter, *http.Request, PodPatchable), patcha
 func podPatch(w http.ResponseWriter, r *http.Request, apply PodPatchable) {
 	contentType := r.Header.Get("Content-Type")
 	if r.Method != http.MethodPost {
+		log.Printf("status=failed path=%s err='invalid request method %s'", r.URL.Path, r.Method)
 		http.Error(w, "only POST permitted", http.StatusMethodNotAllowed)
 		return
 	}
 	defer closer(r.Body)
 
 	if contentType != ApplicationJson {
+		log.Printf("status=failed path=%s err='invalid content-type %s'", r.URL.Path, contentType)
 		http.Error(w, "invalid content-type", http.StatusBadRequest)
 		return
 	}
@@ -88,21 +93,25 @@ func podPatch(w http.ResponseWriter, r *http.Request, apply PodPatchable) {
 	var review v1.AdmissionReview
 	err := json.NewDecoder(r.Body).Decode(&review)
 	if err != nil {
+		log.Printf("status=failed path=%s err='admission review unmarshal: %v'", r.URL.Path, err)
 		http.Error(w, "error reading response body", http.StatusBadRequest)
 		return
 	}
 
 	if review.Request == nil {
+		log.Printf("status=failed path=%s err='request was nil'", r.URL.Path)
 		http.Error(w, "nil admission request", http.StatusBadRequest)
 		return
 	}
 
 	if isSystem(review.Request.Namespace) {
+		log.Printf("status=ignored path=%s err='system namespace %s'", r.URL.Path, review.Request.Namespace)
 		http.Error(w, "will not modify resource in kube-* namespace", http.StatusForbidden)
 		return
 	}
 
 	if review.Request.Resource != podResource {
+		log.Printf("status=failed path=%s err='unexpected resource got %v, want v1/pods'", r.URL.Path, review.Request.Resource)
 		http.Error(w, "resource not a v1.Pod", http.StatusBadRequest)
 		return
 	}
@@ -110,18 +119,21 @@ func podPatch(w http.ResponseWriter, r *http.Request, apply PodPatchable) {
 	var pod corev1.Pod
 	err = json.Unmarshal(review.Request.Object.Raw, &pod)
 	if err != nil {
+		log.Printf("status=failed path=%s err='pod unmarshal: %v'", r.URL.Path, err)
 		http.Error(w, "unable to unmarshal kubernetes v1.Pod", http.StatusBadRequest)
 		return
 	}
 
 	ops, err := apply(&pod)
 	if err != nil {
+		log.Printf("status=failed path=%s err='apply: %v'", r.URL.Path, err)
 		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 
 	patch, err := json.Marshal(ops)
 	if err != nil {
+		log.Printf("status=failed path=%s err='ops marshal: %v'", r.URL.Path, err)
 		http.Error(w, "unable to marshal operation json", http.StatusInternalServerError)
 		return
 	}
@@ -141,6 +153,7 @@ func podPatch(w http.ResponseWriter, r *http.Request, apply PodPatchable) {
 	enc := json.NewEncoder(w)
 	err = enc.Encode(&resp)
 	if err != nil {
+		log.Printf("status=failed path=%s err='admission review marshal: %v'", r.URL.Path, err)
 		http.Error(w, "unable to encode response json", http.StatusInternalServerError)
 		return
 	}

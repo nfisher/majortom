@@ -41,17 +41,17 @@ var resourcePods = metav1.GroupVersionResource{Version: "v1", Resource: "resourc
 
 func Test_post(t *testing.T) {
 	cases := map[string]struct {
-		reqBody interface{}
 		code    int
+		reqBody interface{}
 		message string
 	}{
-		"empty body":           {"", http.StatusBadRequest, "error reading response body"},
-		"nil review request":   {&v1.AdmissionReview{}, http.StatusBadRequest, "nil admission request"},
-		"system namespace":     {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "kube-system"}}, http.StatusForbidden, "will not modify resource in kube-* namespace"},
-		"deployments resource": {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: metav1.GroupVersionResource{Version: "v1", Resource: "deployments"}}}, http.StatusBadRequest, "resource not a v1.Pod"},
-		"empty pod payload":    {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: resourcePods}}, http.StatusBadRequest, "unable to unmarshal kubernetes v1.Pod"},
-		"pod with owner":       {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: resourcePods, Object: podWithOwnerLabel()}}, http.StatusForbidden, "pod has owner"},
-		"happy path":           {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: resourcePods, Object: tidePod()}}, http.StatusOK, `{"kind":"AdmissionReview","apiVersion":"admission.k8s.io/v1"`},
+		"empty body":           {http.StatusBadRequest,"",  "error reading response body"},
+		"nil review request":   {http.StatusBadRequest, &v1.AdmissionReview{},  "nil admission request"},
+		"system namespace":     {http.StatusForbidden, &v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "kube-system"}}, "will not modify resource in kube-* namespace"},
+		"deployments resource": {http.StatusBadRequest, &v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: metav1.GroupVersionResource{Version: "v1", Resource: "deployments"}}}, "resource not a v1.Pod"},
+		"empty pod payload":    {http.StatusBadRequest, &v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: resourcePods}}, "unable to unmarshal kubernetes v1.Pod"},
+		"pod with owner":       {http.StatusForbidden,&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: resourcePods, Object: podWithOwnerLabel()}},  "pod has owner"},
+		"happy path":           {http.StatusOK, &v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: resourcePods, Object: tidePod()}}, `{"kind":"AdmissionReview","apiVersion":"admission.k8s.io/v1"`},
 	}
 
 	for n, tc := range cases {
