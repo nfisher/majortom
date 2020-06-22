@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,7 +18,7 @@ import (
 func Test_get_should_not_be_allowed_method(t *testing.T) {
 	r, _ := http.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
-	addOwnerLabel(w, r)
+	podPatch(w, r, addOwner)
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("w.Code=%v, want StatusMethodNotAllowed", w.Code)
 	}
@@ -27,7 +28,7 @@ func Test_non_json_content_type_should_be_invalid(t *testing.T) {
 	r := post("")
 	r.Header.Set("Content-Type", "text/html")
 	w := httptest.NewRecorder()
-	addOwnerLabel(w, r)
+	podPatch(w, r, addOwner)
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("w.Code=%v, want StatusBadRequest", w.Code)
 	}
@@ -39,26 +40,27 @@ func Test_non_json_content_type_should_be_invalid(t *testing.T) {
 var resourcePods = metav1.GroupVersionResource{Version: "v1", Resource: "resourcePods"}
 
 func Test_post(t *testing.T) {
-	cases := map[string]struct{
+	cases := map[string]struct {
 		reqBody interface{}
-		code int
+		code    int
 		message string
 	}{
-		"empty body": {"", http.StatusBadRequest, "error reading response body" },
-		"nil review request": {&v1.AdmissionReview{}, http.StatusBadRequest, "nil admission request"},
-		"system namespace": {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "kube-system"}}, http.StatusForbidden, "will not modify resource in kube-* namespace"},
+		"empty body":           {"", http.StatusBadRequest, "error reading response body"},
+		"nil review request":   {&v1.AdmissionReview{}, http.StatusBadRequest, "nil admission request"},
+		"system namespace":     {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "kube-system"}}, http.StatusForbidden, "will not modify resource in kube-* namespace"},
 		"deployments resource": {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: metav1.GroupVersionResource{Version: "v1", Resource: "deployments"}}}, http.StatusBadRequest, "resource not a v1.Pod"},
-		"empty pod payload": {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: resourcePods}}, http.StatusBadRequest, "unable to unmarshal kubernetes v1.Pod"},
-		"pod with owner": {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: resourcePods, Object: podWithOwnerLabel()}}, http.StatusForbidden, "pod has owner"},
-		"happy path":  {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: resourcePods, Object: tidePod()}}, http.StatusOK, `{"kind":"AdmissionReview","apiVersion":"admission.k8s.io/v1"`},
+		"empty pod payload":    {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: resourcePods}}, http.StatusBadRequest, "unable to unmarshal kubernetes v1.Pod"},
+		"pod with owner":       {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: resourcePods, Object: podWithOwnerLabel()}}, http.StatusForbidden, "pod has owner"},
+		"happy path":           {&v1.AdmissionReview{Request: &v1.AdmissionRequest{Namespace: "default", Resource: resourcePods, Object: tidePod()}}, http.StatusOK, `{"kind":"AdmissionReview","apiVersion":"admission.k8s.io/v1"`},
 	}
 
 	for n, tc := range cases {
 		tc := tc
+		h := bind(podPatch, addOwner)
 		t.Run(n, func(t *testing.T) {
 			r := post(tc.reqBody)
 			w := httptest.NewRecorder()
-			addOwnerLabel(w, r)
+			h(w, r)
 			if w.Code != tc.code {
 				t.Errorf("w.Code=%v, want %v", w.Code, tc.code)
 			}
@@ -66,6 +68,42 @@ func Test_post(t *testing.T) {
 				t.Errorf("response starts with <%v>, want <%v>", w.Body.String(), tc.message)
 			}
 		})
+	}
+}
+
+func Test_isSystem_kube_public(t *testing.T) {
+	actual := isSystem("kube-public")
+	if actual != true {
+		t.Errorf("isSystem(`kube-public`)=%v, want false", actual)
+	}
+}
+
+func Test_isSystem_kube_system(t *testing.T) {
+	actual := isSystem("kube-system")
+	if actual != true {
+		t.Errorf("isSystem(`kube-system`)=%v, want false", actual)
+	}
+}
+
+func Test_isSystem_default(t *testing.T) {
+	actual := isSystem("default")
+	if actual != false {
+		t.Errorf("isSystem(`default`)=%v, want false", actual)
+	}
+}
+
+func Test_logger_handler(t *testing.T) {
+	var buf bytes.Buffer
+	lg := log.New(&buf, "", 0)
+	mux := http.NewServeMux()
+	h := logger{mux, lg}
+	r, _ := http.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	actual := buf.String()
+	expected := "status=404 method=GET path=/\n"
+	if actual != expected {
+		t.Errorf("log=`%s`, want `%s`", actual, expected)
 	}
 }
 
@@ -94,25 +132,4 @@ func post(v interface{}) *http.Request {
 	r, _ := http.NewRequest(http.MethodPost, "/", buf)
 	r.Header.Set("Content-Type", ApplicationJson)
 	return r
-}
-
-func Test_isSystem_kube_public(t *testing.T) {
-	actual := isSystem("kube-public")
-	if actual != true {
-		t.Errorf("isSystem(`kube-public`)=%v, want false", actual)
-	}
-}
-
-func Test_isSystem_kube_system(t *testing.T) {
-	actual := isSystem("kube-system")
-	if actual != true {
-		t.Errorf("isSystem(`kube-system`)=%v, want false", actual)
-	}
-}
-
-func Test_isSystem_default(t *testing.T) {
-	actual := isSystem("default")
-	if actual != false {
-		t.Errorf("isSystem(`default`)=%v, want false", actual)
-	}
 }

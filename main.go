@@ -2,14 +2,13 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"os"
 
 	"k8s.io/api/admission/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/serializer"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -27,23 +26,25 @@ var (
 )
 
 func Exec(addr, certPath, keyPath string) {
+	lg := log.New(os.Stderr, "", log.LstdFlags|log.LUTC|log.Lshortfile)
 	mux := http.NewServeMux()
-	mux.HandleFunc("/labels/owner", addOwnerLabel)
+	mux.HandleFunc("/labels/owner", bind(podPatch, addOwner))
 	server := &http.Server{
-		Addr:    addr,
-		Handler: &logger{mux},
+		Addr: addr,
+		Handler: &logger{
+			Handler: mux,
+			Logger:  lg,
+		},
 	}
-	log.Println("binding TLS listener on", server.Addr)
-	log.Fatalln(server.ListenAndServeTLS(certPath, keyPath))
+	lg.Println("binding TLS listener on", server.Addr)
+	lg.Fatalln(server.ListenAndServeTLS(certPath, keyPath))
 }
 
 func main() {
 	Exec(DefaultAddr, DefaultCertPath, DefaultKeyPath)
 }
 
-var dec = serializer.NewCodecFactory(runtime.NewScheme()).UniversalDeserializer()
 var podResource = metav1.GroupVersionResource{Version: "v1", Resource: "resourcePods"}
-var reviewResource = metav1.GroupVersionResource{Version: "v1", Resource: "AdmissionReview"}
 
 func closer(c io.Closer) {
 	err := c.Close()
@@ -52,7 +53,26 @@ func closer(c io.Closer) {
 	}
 }
 
-func addOwnerLabel(w http.ResponseWriter, r *http.Request) {
+var ErrPodHasOwnerLabel = fmt.Errorf("pod has owner")
+
+func addOwner(pod *corev1.Pod) ([]operation, error) {
+	_, ok := pod.ObjectMeta.Labels["owner"]
+	if ok {
+		return nil, ErrPodHasOwnerLabel
+	}
+	op := addOp("/metadata/labels/owner", "nathan.fisher")
+	return []operation{op}, nil
+}
+
+type PodPatchable func(*corev1.Pod) ([]operation, error)
+
+func bind(handler func(http.ResponseWriter, *http.Request, PodPatchable), patchable PodPatchable) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		handler(w, r, patchable)
+	}
+}
+
+func podPatch(w http.ResponseWriter, r *http.Request, apply PodPatchable) {
 	contentType := r.Header.Get("Content-Type")
 	if r.Method != http.MethodPost {
 		http.Error(w, "only POST permitted", http.StatusMethodNotAllowed)
@@ -94,14 +114,13 @@ func addOwnerLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, ok := pod.ObjectMeta.Labels["owner"]
-	if ok {
-		http.Error(w, "pod has owner", http.StatusForbidden)
+	ops, err := apply(&pod)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
 		return
 	}
 
-	op := addOp("/metadata/labels/owner", "nathan.fisher")
-	ops, err := json.Marshal([]operation{op})
+	patch, err := json.Marshal(ops)
 	if err != nil {
 		http.Error(w, "unable to marshal operation json", http.StatusInternalServerError)
 		return
@@ -114,7 +133,7 @@ func addOwnerLabel(w http.ResponseWriter, r *http.Request) {
 			UID:       review.Request.UID,
 			Allowed:   true,
 			PatchType: &pt,
-			Patch:     ops,
+			Patch:     patch,
 		},
 	}
 
@@ -153,12 +172,13 @@ func (w *responseCode) WriteHeader(statusCode int) {
 
 type logger struct {
 	Handler http.Handler
+	Logger  *log.Logger
 }
 
 func (l *logger) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wc := &responseCode{w, http.StatusOK}
 	l.Handler.ServeHTTP(wc, r)
-	log.Printf("status=%d method=%s path=%s\n", wc.code, r.Method, r.URL.Path)
+	l.Logger.Printf("status=%d method=%s path=%s\n", wc.code, r.Method, r.URL.Path)
 }
 
 func isSystem(namespace string) bool {
