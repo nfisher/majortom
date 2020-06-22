@@ -111,7 +111,7 @@ func podPatch(w http.ResponseWriter, r *http.Request, apply PodPatchable) {
 	}
 
 	if review.Request.Resource != podResource {
-		log.Printf("status=failed path=%s err='unexpected resource got %v, want v1/pods'", r.URL.Path, review.Request.Resource)
+		log.Printf("status=failed path=%s err='unexpected resource got %#v, want %#v'", r.URL.Path, review.Request.Resource, podResource)
 		http.Error(w, "resource not a v1.Pod", http.StatusBadRequest)
 		return
 	}
