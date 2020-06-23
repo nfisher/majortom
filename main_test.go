@@ -128,12 +128,14 @@ func Test_patch_env_var_to_single_container(t *testing.T) {
 	}
 	expected := operation{
 		Op:   "add",
-		Path: "/spec/containers/0/env/0",
-		Value: map[string]interface{}{
-			"name": "NODEIP",
-			"valueFrom": map[string]interface{}{
-				"fieldRef": map[string]interface{}{
-					"fieldPath": "status.hostIP",
+		Path: "/spec/containers/0/env",
+		Value: []map[string]interface{}{
+			{
+				"name": "NODEIP",
+				"valueFrom": map[string]interface{}{
+					"fieldRef": map[string]interface{}{
+						"fieldPath": "status.hostIP",
+					},
 				},
 			},
 		},
@@ -143,7 +145,7 @@ func Test_patch_env_var_to_single_container(t *testing.T) {
 	}
 }
 
-func Test_patch_env_var_to_multiple_containers(t *testing.T) {
+func Test_VarPatch_applied_to_multiple_containers(t *testing.T) {
 	pod := corev1.Pod{
 		Spec: corev1.PodSpec{Containers: []corev1.Container{
 			{Image: "nginx:latest", Env: []corev1.EnvVar{{Name: "REMOTE", Value: "junctionbox.ca"}, {Name: "NODEIP", Value: "localhost"}}},
@@ -188,69 +190,7 @@ func Test_patch_env_var_to_multiple_containers(t *testing.T) {
 	}
 }
 
-func Test_patch_with_add(t *testing.T) {
-	pod := corev1.Pod{
-		Spec: corev1.PodSpec{Containers: []corev1.Container{{Image: "nginx:latest", Env: []corev1.EnvVar{{Name: "REMOTE", Value: "junctionbox.ca"}}}}},
-	}
-	ops := []operation{varAdd(0, 1, "NODEIP", "status.nodeIP")}
-	patchBytes, _ := json.Marshal(ops)
-	podBytes, _ := json.Marshal(&pod)
-	patch, err := jsonpatch.DecodePatch(patchBytes)
-	if err != nil {
-		t.Errorf("DecodePatch err=%v, want nil", err)
-	}
-	patched, err := patch.Apply(podBytes)
-	if err != nil {
-		t.Errorf("patch.Apply err=%v, want nil", err)
-	}
-	var podWithPatch corev1.Pod
-	err = json.Unmarshal(patched, &podWithPatch)
-	if err != nil {
-		t.Errorf("json.Unmarshal err=%v, want nil", err)
-	}
-	container := podWithPatch.Spec.Containers[0]
-	if container.Image == "" {
-		t.Error("container[0].env[0].image=``, want `nginx:latest`")
-	}
-	expected := []corev1.EnvVar{
-		{Name: "REMOTE", Value: "junctionbox.ca"},
-		{Name: "NODEIP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.nodeIP"}}},
-	}
-	if !cmp.Equal(container.Env, expected) {
-		t.Errorf("ops mismatch (+want -got)\n%s", cmp.Diff(container.Env, expected))
-	}
-}
-
-func Test_patch_with_replace(t *testing.T) {
-	pod := corev1.Pod{
-		Spec: corev1.PodSpec{Containers: []corev1.Container{{Image: "nginx:latest", Env: []corev1.EnvVar{{Name: "NODEIP", Value: "localhost"}}}}},
-	}
-	ops := []operation{varReplace(0, 0, "NODEIP", "status.nodeIP")}
-	patchBytes, _ := json.Marshal(ops)
-	podBytes, _ := json.Marshal(&pod)
-	patch, err := jsonpatch.DecodePatch(patchBytes)
-	if err != nil {
-		t.Errorf("DecodePatch err=%v, want nil", err)
-	}
-	patched, err := patch.Apply(podBytes)
-	if err != nil {
-		t.Errorf("patch.Apply err=%v, want nil", err)
-	}
-
-	var podWithPatch corev1.Pod
-	err = json.Unmarshal(patched, &podWithPatch)
-	if err != nil {
-		t.Errorf("json.Unmarshal err=%v, want nil", err)
-	}
-	if podWithPatch.Spec.Containers[0].Env[0].Value != "" {
-		t.Errorf("container[0].env[0].value=%s, want ``", podWithPatch.Spec.Containers[0].Env[0].Value)
-	}
-	if podWithPatch.Spec.Containers[0].Env[0].ValueFrom == nil {
-		t.Error("container[0].env[0].valueFrom=nil, want <map>")
-	}
-}
-
-func Test_patch_update_env_var_in_single_container(t *testing.T) {
+func Test_VarPatch_applied_to_single_container(t *testing.T) {
 	pod := corev1.Pod{
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{Image: "nginx:latest", Env: []corev1.EnvVar{{Name: "REMOTE", Value: "junctionbox.ca"}, {Name: "NODEIP", Value: "localhost"}}}}},
 	}
@@ -275,6 +215,76 @@ func Test_patch_update_env_var_in_single_container(t *testing.T) {
 	}
 	if !cmp.Equal(ops[0], expected) {
 		t.Errorf("ops mismatch (+want -got)\n%s", cmp.Diff(ops[0], expected))
+	}
+}
+
+func applyPatch(t *testing.T, pod *corev1.Pod, ops []operation) *corev1.Pod {
+	patchBytes, _ := json.Marshal(ops)
+	podBytes, _ := json.Marshal(&pod)
+	patch, err := jsonpatch.DecodePatch(patchBytes)
+	if err != nil {
+		t.Errorf("DecodePatch err=%v, want nil", err)
+	}
+	patched, err := patch.Apply(podBytes)
+	if err != nil {
+		t.Errorf("patch.Apply err=%v, want nil", err)
+	}
+	var podWithPatch corev1.Pod
+	err = json.Unmarshal(patched, &podWithPatch)
+	if err != nil {
+		t.Errorf("json.Unmarshal err=%v, want nil", err)
+	}
+	return &podWithPatch
+}
+
+func Test_varAdd_patch_pod_with_nil_env(t *testing.T) {
+	pod := corev1.Pod{
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Image: "nginx:latest"}}},
+	}
+	ops := []operation{varAdd(0, 0, "NODEIP", "status.nodeIP")}
+	podWithPatch := applyPatch(t, &pod, ops)
+	container := podWithPatch.Spec.Containers[0]
+	if container.Image == "" {
+		t.Error("container[0].env[0].image=``, want `nginx:latest`")
+	}
+	expected := []corev1.EnvVar{
+		{Name: "NODEIP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.nodeIP"}}},
+	}
+	if !cmp.Equal(container.Env, expected) {
+		t.Errorf("ops mismatch (+want -got)\n%s", cmp.Diff(container.Env, expected))
+	}
+}
+
+func Test_varAdd_patch_pod_with_env(t *testing.T) {
+	pod := corev1.Pod{
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Image: "nginx:latest", Env: []corev1.EnvVar{{Name: "REMOTE", Value: "junctionbox.ca"}}}}},
+	}
+	ops := []operation{varAdd(0, 1, "NODEIP", "status.nodeIP")}
+	podWithPatch := applyPatch(t, &pod, ops)
+	container := podWithPatch.Spec.Containers[0]
+	if container.Image == "" {
+		t.Error("container[0].env[0].image=``, want `nginx:latest`")
+	}
+	expected := []corev1.EnvVar{
+		{Name: "REMOTE", Value: "junctionbox.ca"},
+		{Name: "NODEIP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.nodeIP"}}},
+	}
+	if !cmp.Equal(container.Env, expected) {
+		t.Errorf("ops mismatch (+want -got)\n%s", cmp.Diff(container.Env, expected))
+	}
+}
+
+func Test_patch_with_replace(t *testing.T) {
+	pod := corev1.Pod{
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Image: "nginx:latest", Env: []corev1.EnvVar{{Name: "NODEIP", Value: "localhost"}}}}},
+	}
+	ops := []operation{varReplace(0, 0, "NODEIP", "status.nodeIP")}
+	podWithPatch := applyPatch(t, &pod, ops)
+	if podWithPatch.Spec.Containers[0].Env[0].Value != "" {
+		t.Errorf("container[0].env[0].value=%s, want ``", podWithPatch.Spec.Containers[0].Env[0].Value)
+	}
+	if podWithPatch.Spec.Containers[0].Env[0].ValueFrom == nil {
+		t.Error("container[0].env[0].valueFrom=nil, want <map>")
 	}
 }
 
