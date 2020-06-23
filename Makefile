@@ -1,6 +1,6 @@
 GIT_SHA := $(shell git rev-parse --short HEAD)
 SRC := $(shell find . -name \*.go)
-GO_LINUX := GOOS=linux GOARCH=amd64 go
+GO_LINUX := CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go
 
 .PHONY: all
 all: docker
@@ -21,7 +21,7 @@ coverage.out: cover.out
 	go tool cover -func=cover.out | tee coverage.out
 
 majortom.amd64: $(SRC)
-	$(GO_LINUX) build -v -ldflags "-X main.Revision=$(GIT_SHA)" -o $@
+	$(GO_LINUX) build -v -a -tags netgo -ldflags "-w -X main.Revision=$(GIT_SHA)" -o $@
 
 .PHONY: docker
 docker: majortom.amd64 cover.out
