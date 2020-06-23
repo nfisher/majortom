@@ -25,13 +25,13 @@ var (
 	Revision = "dev"
 )
 
-const LogFlags = log.LstdFlags|log.LUTC|log.Lshortfile
+const LogFlags = log.LstdFlags | log.LUTC | log.Lshortfile
 
 func Exec(addr, certPath, keyPath string) {
 	log.SetFlags(LogFlags)
 	lg := log.New(os.Stderr, "", LogFlags)
 	mux := http.NewServeMux()
-	mux.HandleFunc("/labels/owner", bind(podPatch, addOwner))
+	mux.HandleFunc("/labels/owner", bind(podPatch, VarPatch("NODEIP", "status.hostIP")))
 	server := &http.Server{
 		Addr: addr,
 		Handler: &logger{
@@ -58,13 +58,68 @@ func closer(c io.Closer) {
 
 var ErrPodHasOwnerLabel = fmt.Errorf("pod has owner")
 
-func addOwner(pod *corev1.Pod) ([]operation, error) {
+func AddOwner(pod *corev1.Pod) ([]operation, error) {
 	_, ok := pod.ObjectMeta.Labels["owner"]
 	if ok {
 		return nil, ErrPodHasOwnerLabel
 	}
 	op := addOp("/metadata/labels/owner", "nathan.fisher")
 	return []operation{op}, nil
+}
+
+func varReplace(cid, eid int, name, value string) operation {
+	path := fmt.Sprintf("/spec/containers/%d/env/%d", cid, eid)
+	pathValue := map[string]interface{}{
+		"name": name,
+		"valueFrom": map[string]interface{}{
+			"fieldRef": map[string]interface{}{
+				"fieldPath": value,
+			},
+		},
+	}
+	return replaceOp(path, pathValue)
+}
+
+func varAdd(pos int, name, value string) operation {
+	path := fmt.Sprintf("/spec/containers/%d", pos)
+	pathValue := map[string]interface{}{
+		"env": []map[string]interface{}{
+			{
+				"name": name,
+				"valueFrom": map[string]interface{}{
+					"fieldRef": map[string]interface{}{
+						"fieldPath": value,
+					},
+				},
+			},
+		},
+	}
+	return addOp(path, pathValue)
+}
+
+func VarPatch(name, value string) PodPatchable {
+	return func(pod *corev1.Pod) ([]operation, error) {
+		var ops []operation
+		for i := range pod.Spec.Containers {
+			container := pod.Spec.Containers[i]
+			var eid = -1
+			for j := range container.Env {
+				env := container.Env[j]
+				if env.Name == name {
+					eid = j
+					break
+				}
+			}
+			var op operation
+			if eid == -1 {
+				op = varAdd(i, name, value)
+			} else {
+				op = varReplace(i, eid, name, value)
+			}
+			ops = append(ops, op)
+		}
+		return ops, nil
+	}
 }
 
 type PodPatchable func(*corev1.Pod) ([]operation, error)
@@ -165,9 +220,17 @@ type operation struct {
 	Value interface{} `json:"value,omitempty"`
 }
 
-func addOp(path, value string) operation {
+func addOp(path string, value interface{}) operation {
 	return operation{
 		Op:    "add",
+		Path:  path,
+		Value: value,
+	}
+}
+
+func replaceOp(path string, value interface{}) operation {
+	return operation{
+		Op:    "replace",
 		Path:  path,
 		Value: value,
 	}
