@@ -80,17 +80,13 @@ func varReplace(cid, eid int, name, value string) operation {
 	return replaceOp(path, pathValue)
 }
 
-func varAdd(pos int, name, value string) operation {
-	path := fmt.Sprintf("/spec/containers/%d", pos)
+func varAdd(cid, eid int, name, value string) operation {
+	path := fmt.Sprintf("/spec/containers/%d/env/%d", cid, eid)
 	pathValue := map[string]interface{}{
-		"env": []map[string]interface{}{
-			{
-				"name": name,
-				"valueFrom": map[string]interface{}{
-					"fieldRef": map[string]interface{}{
-						"fieldPath": value,
-					},
-				},
+		"name": name,
+		"valueFrom": map[string]interface{}{
+			"fieldRef": map[string]interface{}{
+				"fieldPath": value,
 			},
 		},
 	}
@@ -112,7 +108,7 @@ func VarPatch(name, value string) PodPatchable {
 			}
 			var op operation
 			if eid == -1 {
-				op = varAdd(i, name, value)
+				op = varAdd(i, len(container.Env), name, value)
 			} else {
 				op = varReplace(i, eid, name, value)
 			}
