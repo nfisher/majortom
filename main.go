@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"os"
 
-	"k8s.io/api/admission/v1"
+	v1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -25,11 +25,13 @@ var (
 	Revision = "dev"
 )
 
-const LogFlags = log.LstdFlags | log.LUTC | log.Lshortfile
+const LogFlags = log.LstdFlags | log.LUTC | log.Lshortfile | log.Lmsgprefix
 
 func Exec(addr, certPath, keyPath string) {
+	prefix := fmt.Sprintf("rev=%s ", Revision)
 	log.SetFlags(LogFlags)
-	lg := log.New(os.Stderr, "", LogFlags)
+	log.SetPrefix(prefix)
+	lg := log.New(os.Stderr, prefix, LogFlags)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/labels/owner", bind(podPatch, VarPatch("NODEIP", "status.hostIP")))
 	server := &http.Server{
@@ -39,7 +41,7 @@ func Exec(addr, certPath, keyPath string) {
 			Logger:  lg,
 		},
 	}
-	lg.Println("binding TLS listener on", server.Addr)
+	lg.Printf("status=binding addr=%s\n", server.Addr)
 	lg.Fatalln(server.ListenAndServeTLS(certPath, keyPath))
 }
 
